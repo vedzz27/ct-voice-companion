@@ -1,0 +1,6 @@
+faster-whisper>=1.0      # local Whisper (CTranslate2); downloads the model on first run
+sounddevice              # microphone
+numpy
+rapidfuzz                # matching free questions to approved answers
+fastapi
+uvicorn

@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CT Voice Companion</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { --bg:#f4f5f7; --card:#fff; --ink:#1d2330; --muted:#667085; --line:#e3e6eb; --accent:#2457c5;
+          --urgent:#b42318; --high:#c4320a; --medium:#b35c00; --info:#475467; --ok:#1a7f37; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--ink); }
+  header { display:flex; flex-wrap:wrap; align-items:center; gap:12px; padding:12px 20px; background:var(--card); border-bottom:1px solid var(--line); }
+  header h1 { font-size:18px; margin:0 8px 0 0; }
+  .pill { font-size:13px; padding:3px 10px; border-radius:999px; background:#eef0f3; color:var(--muted); white-space:nowrap; }
+  .pill.live { background:#dff3e4; color:var(--ok); } .pill.talk { background:#e5ecff; color:var(--accent); }
+  main { display:grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap:16px; padding:16px 20px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; padding:12px 16px; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; min-width:0; }
+  .card h2 { font-size:15px; margin:0 0 10px; }
+  .stack > * + * { margin-top:16px; }
+  .alert { border-left:5px solid var(--info); padding:8px 10px; margin:6px 0; background:#f8f9fb; border-radius:6px; }
+  .alert b { display:block; } .alert small { color:var(--muted); }
+  .alert.urgent { border-color:var(--urgent); background:#fde7e5; } .alert.urgent b { color:var(--urgent); font-size:17px; }
+  .alert.high { border-color:var(--high); background:#fff1ea; } .alert.medium { border-color:var(--medium); background:#fff8eb; }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  td { padding:6px 4px; border-bottom:1px solid var(--line); vertical-align:top; }
+  .ans { font-weight:600; white-space:nowrap; } .ans.yes { color:var(--high); } .ans.no { color:var(--ok); } .ans.unsure { color:var(--medium); }
+  #chat { max-height:60vh; overflow-y:auto; display:flex; flex-direction:column; gap:6px; }
+  .msg { max-width:85%; padding:7px 11px; border-radius:12px; overflow-wrap:anywhere; }
+  .msg.companion { background:#e5ecff; align-self:flex-start; } .msg.patient { background:#eef0f3; align-self:flex-end; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; }
+  input { flex:1; min-width:0; padding:8px 10px; font-size:15px; border:1px solid var(--line); border-radius:6px; }
+  button, a.btn { padding:8px 13px; font-size:14px; border-radius:6px; border:1px solid var(--accent); background:var(--accent); color:#fff; cursor:pointer; text-decoration:none; }
+  button.secondary, a.btn { background:#fff; color:var(--accent); }
+  .muted { color:var(--muted); font-size:13px; }
+  #meter { width:70px; height:8px; background:#eef0f3; border-radius:4px; overflow:hidden; }
+  #meter div { height:100%; width:0; background:var(--ok); transition:width .15s; }
+</style>
+</head>
+<body>
+<header>
+  <h1>CT Voice Companion</h1>
+  <span class="pill" id="mode">connecting…</span>
+  <span class="pill" id="activity">idle</span>
+  <div id="meter" title="microphone level"><div></div></div>
+  <span class="pill" id="lang"></span>
+  <span class="pill" id="progress"></span>
+</header>
+<main>
+  <div class="stack">
+    <div class="card">
+      <h2>Alerts for staff</h2>
+      <div id="alerts"><div class="muted">No alerts.</div></div>
+    </div>
+    <div class="card">
+      <h2>Checklist answers</h2>
+      <table><tbody id="answers"><tr><td class="muted">No answers yet.</td></tr></tbody></table>
+      <div class="muted" style="margin-top:8px">Collected by a voice assistant. Confirm every answer with the patient.</div>
+    </div>
+    <div class="card">
+      <h2>Controls</h2>
+      <div class="row">
+        <input id="pid" placeholder="Patient ID (optional)">
+        <button id="reset">New patient</button>
+        <a class="btn" href="/api/report" target="_blank">Summary</a>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <input id="typed" placeholder="Type what the patient says (testing / no microphone)">
+        <button class="secondary" id="send">Send</button>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Conversation</h2>
+    <div id="chat"></div>
+  </div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let lastLen = -1;
+async function refresh() {
+  let s;
+  try { s = await (await fetch('/api/state')).json(); } catch { $('mode').textContent = 'not reachable'; return; }
+  $('mode').textContent = s.mode === 'microphone' ? `microphone · Whisper ${s.model}` : s.mode;
+  $('activity').textContent = s.speaking ? 'speaking' : s.listening ? 'hearing speech…' : 'listening';
+  $('activity').className = 'pill ' + (s.speaking ? 'talk' : s.listening ? 'live' : '');
+  $('meter').firstElementChild.style.width = Math.min(100, s.level * 2000) + '%';
+  $('lang').textContent = s.lang === 'de' ? 'Deutsch' : 'English';
+  $('progress').textContent = s.state === 'done' ? 'checklist done' : s.state === 'language' ? 'choosing language' : `question ${s.progress}`;
+  $('alerts').innerHTML = s.alerts.length ? s.alerts.map(a => `<div class="alert ${a.severity}">
+      <b>${a.severity === 'urgent' ? '⚠ ' : ''}${esc(a.note)}</b>${a.detail ? esc(a.detail) + '<br>' : ''}
+      <small>${a.severity.toUpperCase()} · said: “${esc(a.said)}”</small></div>`).join('') : '<div class="muted">No alerts.</div>';
+  $('answers').innerHTML = s.answers.length ? s.answers.map(a => `<tr><td class="ans ${a.answer}">${a.answer}</td>
+      <td>${esc(a.question)}${a.detail ? '<br><span class="muted">' + esc(a.detail) + '</span>' : ''}</td></tr>`).join('')
+      : '<tr><td class="muted">No answers yet.</td></tr>';
+  if (s.transcript.length !== lastLen) {
+    lastLen = s.transcript.length;
+    $('chat').innerHTML = s.transcript.map(m => `<div class="msg ${m.who}">${esc(m.text)}</div>`).join('');
+    $('chat').scrollTop = $('chat').scrollHeight;
+  }
+}
+async function post(path, body) {
+  await fetch(path, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
+  refresh();
+}
+$('reset').onclick = () => { if (confirm('Start with a new patient? This clears the conversation.')) post('/api/reset', { patient_id: $('pid').value || null }); };
+$('send').onclick = () => { const t = $('typed').value.trim(); if (t) { post('/api/say', { text: t }); $('typed').value = ''; } };
+$('typed').addEventListener('keydown', e => { if (e.key === 'Enter') $('send').click(); });
+refresh(); setInterval(refresh, 700);
+</script>
+</body>
+</html>
